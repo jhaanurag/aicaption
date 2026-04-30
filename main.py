@@ -1,7 +1,9 @@
-system_prompt = f"try to give a two line caption for this product in this tone: funny and product: Eco-friendly reusable water bottle made from stainless steel"
 
-# enter email validate email send otp verify otp then send auth flow
+from langchain.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain.chains import LLMChain
 
+# flow: enter email validate email send otp verify otp then send auth flow
 
 prompt_template = PromptTemplate.from_template(
     'try to give a two line caption for this product in this tone: {funny} and product: {product}'
@@ -9,6 +11,7 @@ prompt_template = PromptTemplate.from_template(
 
 openai = ChatOpenAI(
     model_name='gpt-4.1-2025-04-14',
+    base_url= "http://0.0.0.0:4001/v1",
     openai_api_key='lol'
 )
 
