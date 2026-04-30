@@ -7,7 +7,9 @@ from langchain.chains import LLMChain
 
 load_dotenv()
 
-# flow: enter email validate email -> generate otp -> send otp verify otp then send auth flow
+# flow: open page, enter email validate email -> generate otp 15 min valid -> send otp to backedn -> verify otp -> then send the jwt -> then send : auth flow
+# approval: any new generated content should be saved a wating aproval and admin can only approve it
+
 
 prompt_template = PromptTemplate.from_template(
     'try to give a two line caption for this product in this tone: {funny} and product: {product}'
