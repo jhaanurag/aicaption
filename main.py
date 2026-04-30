@@ -1,18 +1,22 @@
 
+import os
+from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain.chains import LLMChain
 
-# flow: enter email validate email send otp verify otp then send auth flow
+load_dotenv()
+
+# flow: enter email validate email -> generate otp -> send otp verify otp then send auth flow
 
 prompt_template = PromptTemplate.from_template(
     'try to give a two line caption for this product in this tone: {funny} and product: {product}'
 )
 
 openai = ChatOpenAI(
-    model_name='gpt-4.1-2025-04-14',
-    base_url= "http://0.0.0.0:4001/v1",
-    openai_api_key='lol'
+    model_name=os.getenv('OPENAI_MODEL_NAME'),
+    base_url=os.getenv('OPENAI_BASE_URL'),
+    openai_api_key=os.getenv('OPENAI_API_KEY')
 )
 
 chain = LLMChain(llm=openai, prompt=prompt_template)
@@ -22,3 +26,4 @@ response = chain.invoke(
 )
 
 print(response['text'])
+
