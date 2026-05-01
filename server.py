@@ -23,17 +23,23 @@ async def auth_middleware(request: Request, call_next):
             content={"detail": "Not authenticated"}
         )
     
+    # 3. Simple validation and attach user to request state
     token = auth_header.split(" ")[1]
     if "dummy_jwt" not in token:
         return JSONResponse(
             status_code=401, 
             content={"detail": "Invalid token"}
         )
+    
+    # Attach the email (extracted from token) to the request context
+    request.state.email = token.split("dummy_jwt")[1]
 
     return await call_next(request)
 
 tempdict = {}
-admin_email = "admin@admin.com"
+temp_admin_email = "fulfutureful@gmail.com"
+userdict = {temp_admin_email: (10, "admin")} # email: (credits, role)
+content_requests  = {} #requested_by , product_desc, tone, caption, request_status=pending/approved/rejected, request_reason_rejected, created_at)
 
 load_dotenv()
 
@@ -60,6 +66,11 @@ class OTPSchema(BaseModel):
     email: EmailStr
     otp: int
 
+class CaptionSchema(BaseModel):
+    description: str
+    tone: str
+
+
 @app.post("/submit-email")
 async def get_email(payload: EmailSchema):
     # generate the otp and send email and save otp with timestamp keyed by email
@@ -77,17 +88,71 @@ async def verify_otp(payload: OTPSchema):
     #verify otp
     if verify(payload.email, payload.otp):
         #generate jwt with role mentioned and send to frontend
+        if payload.email not in userdict:
+            userdict[payload.email] = (5, "user")
         jwt_token = "dummy_jwt" + payload.email
         return {"message": "OTP verified successfully", "jwt": jwt_token}
     return {"message": "Invalid OTP"}
 
 
-# post the product desc and tone to backend only auth users can 
+# post the product desc: str and tone: str to backend only auth users can 
 # return generated caption and save the generated caption
+@app.post("/generate-caption")
+async def generate_caption(payload: CaptionSchema, request: Request):
+    email = request.state.email
+    caption = f"Generated caption for {payload.description} with {payload.tone} tone"
+    # subtract 1 credit from user
+    credits, role = userdict[email]
+    if credits <= 0:
+        raise HTTPException(status_code=403, detail="Not enough credits")
+    userdict[email] = (credits - 1, role)
+    return {"message": "Caption generated and waiting for approval", "caption": caption}
+
+# get credits
+@app.get("/credits")
+async def get_credits(request: Request):
+    email = request.state.email
+    credits, role = userdict[email]
+    return {"credits": credits}
 
 # post send for approval
+@app.post("/send-for-approval")
+async def send_for_approval(request: Request):
+    email = request.state.email
+    content_requests[email] = {
+        "requested_by": email,
+        "product_desc": "desc",
+        "tone": "tone",
+        "request_status": "pending",
+        "created_at": time.time()
+    }
+    return {"message": "Content sent for approval"}
 
+# get all pending requests for admin
+@app.get("/pending-requests")
+async def pending_requests(request: Request):
+    email = request.state.email
+    credits, role = userdict[email]
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    pending = {k:v for k,v in content_requests.items() if v["request_status"] == "pending"}
+    return {"pending_requests": pending}
 
+# post approve/reject with reason
+@app.post("/review-request")
+async def review_request(request: Request, email_to_review: EmailStr, approve: bool, reason: str = None):
+    email = request.state.email
+    credits, role = userdict[email]
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if email_to_review not in content_requests:
+        raise HTTPException(status_code=404, detail="Request not found")
+    
+    if approve:
+        content_requests[email_to_review]["request_status"] = "approved"
+    else:
+        content_requests[email_to_review]["request_status"] = "rejected"
+        content_requests[email_to_review]["request_reason_rejected"] = reason
+    
+    return {"message": "Request reviewed successfully"}
 
-
- 
