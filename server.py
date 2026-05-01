@@ -1,4 +1,4 @@
-# fastapi backend
+#fastapi backend
 
 import os
 import random
@@ -14,15 +14,18 @@ from ai_service import generate_caption_text
 
 app = FastAPI()
 
-OTP_VALID_SECONDS = 900
-DEFAULT_USER_CREDITS = 5
-DEFAULT_ADMIN_EMAIL = "fulfutureful@gmail.com"
-DEFAULT_ADMIN_CREDITS = 10
+load_dotenv()
+
+OTP_VALID_SECONDS = int(os.environ["OTP_VALID_SECONDS"])
+DEFAULT_USER_CREDITS = int(os.environ["DEFAULT_USER_CREDITS"])
+DEFAULT_ADMIN_EMAIL = os.environ["DEFAULT_ADMIN_EMAIL"]
+DEFAULT_ADMIN_CREDITS = int(os.environ["DEFAULT_ADMIN_CREDITS"])
 
 tempdict = {}
 userdict = {DEFAULT_ADMIN_EMAIL: {"credits": DEFAULT_ADMIN_CREDITS, "role": "admin"}}
 content_requests = {}
 
+# 15 minute valid otp
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     if request.url.path in ["/submit-email", "/submit-otp"]:
@@ -45,8 +48,6 @@ async def auth_middleware(request: Request, call_next):
     request.state.email = token.split("dummy_jwt")[1]
 
     return await call_next(request)
-
-load_dotenv()
 
 yag = yagmail.SMTP(os.getenv("GMAIL_ID"), os.getenv("APP_PASSWORD"))
 
@@ -96,6 +97,7 @@ def generate_otp(email):
     return otp
 
 
+# verify otp
 def verify(email, otp):
     if email in tempdict:
         stored_otp, timestamp = tempdict[email]
@@ -138,140 +140,164 @@ def next_request_key(email):
 
 @app.post("/submit-email")
 async def get_email(payload: EmailSchema):
-    # generate the otp and send email and save otp with timestamp keyed by email
+    # generate otp and send email
     otp = generate_otp(payload.email)
-    tempdict[payload.email] = (otp,time.time())
+    tempdict[payload.email] = (otp, time.time())
     yag.send(
         to=payload.email,
-        subject='Your OTP for AICaption',
-        contents=f'Your OTP is: {otp}. It is valid for 15 minutes.'
+        subject="Your OTP for AICaption",
+        contents=f"Your OTP is: {otp}. It is valid for 15 minutes."
     )   
     return {"message": f"OTP sent to email: {payload.email}"}
 
+
 @app.post("/submit-otp")
 async def verify_otp(payload: OTPSchema):
-    #verify otp
+    # verify otp and send jwt
     if verify(payload.email, payload.otp):
-        #generate jwt with role mentioned and send to frontend
         if payload.email not in userdict:
-            userdict[payload.email] = (5, "user")
-        jwt_token = "dummy_jwt" + payload.email
+            set_user(payload.email, DEFAULT_USER_CREDITS, "user")
+        jwt_token = f"dummy_jwt{payload.email}"
         return {"message": "OTP verified successfully", "jwt": jwt_token}
     return {"message": "Invalid OTP"}
 
 
-# post the product desc: str and tone: str to backend only auth users can 
-# return generated caption and save the generated caption
 @app.post("/generate-caption")
 async def generate_caption(payload: CaptionSchema, request: Request):
-    email = request.state.email
     # subtract 1 credit from user
-    credits, role = userdict[email]
+    email = request.state.email
+    user = require_user(email)
+    credits = user["credits"]
     if credits <= 0:
         raise HTTPException(status_code=403, detail="Not enough credits")
     caption = generate_caption_text(payload.description, payload.tone)
-    userdict[email] = (credits - 1, role)
+    user["credits"] = credits - 1
     return {"message": "Caption generated and waiting for approval", "caption": caption}
 
-# get credits
+
 @app.get("/credits")
 async def get_credits(request: Request):
     email = request.state.email
-    credits, role = userdict[email]
-    return {"credits": credits}
+    user = require_user(email)
+    return {"credits": user["credits"]}
 
-# post send for approval
+
 @app.post("/send-for-approval")
-async def send_for_approval(request: Request):
+async def send_for_approval(payload: ApprovalRequestSchema, request: Request):
+    # post send for approval
     email = request.state.email
-    content_requests[email] = {
-        "requested_by": email,
-        "product_desc": "desc",
-        "tone": "tone",
+    require_user(email)
+    request_key = next_request_key(payload.requested_by)
+    content_requests[request_key] = {
+        "requested_by": payload.requested_by,
+        "product_desc": payload.product_desc,
+        "tone": payload.tone,
+        "generated_caption": payload.generated_caption,
         "request_status": "pending",
+        "request_reason_rejected": None,
         "created_at": time.time()
     }
     return {"message": "Content sent for approval"}
 
-# get all requests for admin
+
 @app.get("/all-requests")
 async def all_requests(request: Request):
+    # get all requests for admin
     email = request.state.email
-    credits, role = userdict[email]
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
+    require_admin(email)
     return {"all_requests": content_requests}
 
-# post approve/reject with reason
-@app.post("/review-request")
-async def review_request(request: Request, email_to_review: EmailStr, approve: bool, reason: str = None):
+
+@app.get("/my-requests")
+async def my_requests(request: Request):
+    # get all requests for user
     email = request.state.email
-    credits, role = userdict[email]
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    if email_to_review not in content_requests:
+    require_user(email)
+    return {
+        "requests": [
+            request_item for request_item in content_requests.values()
+            if request_item["requested_by"] == email
+        ]
+    }
+
+
+@app.post("/review-request")
+async def review_request(payload: ReviewRequestSchema, request: Request):
+    # post approve/reject with reason
+    email = request.state.email
+    require_admin(email)
+
+    request_key = None
+    for key, request_item in content_requests.items():
+        if request_item["requested_by"] == payload.email_to_review:
+            request_key = key
+            break
+
+    if request_key is None:
         raise HTTPException(status_code=404, detail="Request not found")
     
-    if approve:
-        content_requests[email_to_review]["request_status"] = "approved"
+    if payload.approve:
+        content_requests[request_key]["request_status"] = "approved"
+        content_requests[request_key]["request_reason_rejected"] = None
     else:
-        content_requests[email_to_review]["request_status"] = "rejected"
-        content_requests[email_to_review]["request_reason_rejected"] = reason
+        if not payload.reason:
+            raise HTTPException(status_code=422, detail="Reject reason is required")
+        content_requests[request_key]["request_status"] = "rejected"
+        content_requests[request_key]["request_reason_rejected"] = payload.reason
     
     return {"message": "Request reviewed successfully"}
 
-#admin get all users details
+
 @app.get("/all-users")
 async def all_users(request: Request):
+    # admin get all users details
     email = request.state.email
-    credits, role = userdict[email]
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
+    require_admin(email)
     return {"users": userdict}
 
-#update user details can be any combination like only email or email or credits or other stuff only admin can
+
 @app.post("/update-user")
-async def update_user(request: Request, email_to_update: EmailStr, new_email: EmailStr = None, new_credits: int = None):
+async def update_user(payload: UpdateUserSchema, request: Request):
+    # update user details only admin can
     email = request.state.email
-    credits, role = userdict[email]
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    if email_to_update not in userdict:
-        raise HTTPException(status_code=404, detail="User not found")
+    require_admin(email)
+    user = require_user(payload.email_to_update)
     
-    current_credits, current_role = userdict[email_to_update]
-    if new_email:
-        userdict[new_email] = (current_credits, current_role)
-        del userdict[email_to_update]
-    if new_credits is not None:
-        userdict[email_to_update] = (new_credits, current_role)
+    current_email = payload.email_to_update
+    if payload.new_email:
+        userdict[payload.new_email] = dict(user)
+        pop_user(current_email)
+        current_email = payload.new_email
+
+    if payload.new_credits is not None:
+        userdict[current_email]["credits"] = payload.new_credits
+
+    if payload.new_role is not None:
+        userdict[current_email]["role"] = payload.new_role
     
     return {"message": "User updated successfully"}
 
-#admin delete user
+
 @app.post("/delete-user")
 async def delete_user(request: Request, email_to_delete: EmailStr):
+    # admin delete user
     email = request.state.email
-    credits, role = userdict[email]
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    if email_to_delete not in userdict:
-        raise HTTPException(status_code=404, detail="User not found")
+    require_admin(email)
+    require_user(email_to_delete)
     
-    del userdict[email_to_delete]
+    pop_user(email_to_delete)
     
     return {"message": "User deleted successfully"}
 
-#admin create user
+
 @app.post("/create-user")
-async def create_user(request: Request, email_to_create: EmailStr, credits: int, role: str):
+async def create_user(payload: CreateUserSchema, request: Request):
+    # admin create user
     email = request.state.email
-    credits, role = userdict[email]
-    if role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized")
-    if email_to_create in userdict:
+    require_admin(email)
+    if payload.email in userdict:
         raise HTTPException(status_code=400, detail="User already exists")
     
-    userdict[email_to_create] = (credits, role)
+    set_user(payload.email, payload.credits, payload.role)
     
     return {"message": "User created successfully"}
