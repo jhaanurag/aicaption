@@ -128,15 +128,14 @@ async def send_for_approval(request: Request):
     }
     return {"message": "Content sent for approval"}
 
-# get all pending requests for admin
-@app.get("/pending-requests")
-async def pending_requests(request: Request):
+# get all requests for admin
+@app.get("/all-requests")
+async def all_requests(request: Request):
     email = request.state.email
     credits, role = userdict[email]
     if role != "admin":
         raise HTTPException(status_code=403, detail="Not authorized")
-    pending = {k:v for k,v in content_requests.items() if v["request_status"] == "pending"}
-    return {"pending_requests": pending}
+    return {"all_requests": content_requests}
 
 # post approve/reject with reason
 @app.post("/review-request")
@@ -155,4 +154,46 @@ async def review_request(request: Request, email_to_review: EmailStr, approve: b
         content_requests[email_to_review]["request_reason_rejected"] = reason
     
     return {"message": "Request reviewed successfully"}
+
+#admin get all users details
+@app.get("/all-users")
+async def all_users(request: Request):
+    email = request.state.email
+    credits, role = userdict[email]
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return {"users": userdict}
+
+#update user details can be any combination like only email or email or credits or other stuff only admin can
+@app.post("/update-user")
+async def update_user(request: Request, email_to_update: EmailStr, new_email: EmailStr = None, new_credits: int = None):
+    email = request.state.email
+    credits, role = userdict[email]
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if email_to_update not in userdict:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    current_credits, current_role = userdict[email_to_update]
+    if new_email:
+        userdict[new_email] = (current_credits, current_role)
+        del userdict[email_to_update]
+    if new_credits is not None:
+        userdict[email_to_update] = (new_credits, current_role)
+    
+    return {"message": "User updated successfully"}
+
+#admin delete user
+@app.post("/delete-user")
+async def delete_user(request: Request, email_to_delete: EmailStr):
+    email = request.state.email
+    credits, role = userdict[email]
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if email_to_delete not in userdict:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    del userdict[email_to_delete]
+    
+    return {"message": "User deleted successfully"}
 
