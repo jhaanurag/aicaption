@@ -197,3 +197,16 @@ async def delete_user(request: Request, email_to_delete: EmailStr):
     
     return {"message": "User deleted successfully"}
 
+#admin create user
+@app.post("/create-user")
+async def create_user(request: Request, email_to_create: EmailStr, credits: int, role: str):
+    email = request.state.email
+    credits, role = userdict[email]
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if email_to_create in userdict:
+        raise HTTPException(status_code=400, detail="User already exists")
+    
+    userdict[email_to_create] = (credits, role)
+    
+    return {"message": "User created successfully"}
