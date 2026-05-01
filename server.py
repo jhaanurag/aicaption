@@ -1,15 +1,27 @@
-#fastapi backend
+# fastapi backend
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, EmailStr
+import os
 import random
 import time
-import os
-from dotenv import load_dotenv
+from typing import Optional
+
 import yagmail
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, EmailStr
+from ai_service import generate_caption_text
 
 app = FastAPI()
+
+OTP_VALID_SECONDS = 900
+DEFAULT_USER_CREDITS = 5
+DEFAULT_ADMIN_EMAIL = "fulfutureful@gmail.com"
+DEFAULT_ADMIN_CREDITS = 10
+
+tempdict = {}
+userdict = {DEFAULT_ADMIN_EMAIL: {"credits": DEFAULT_ADMIN_CREDITS, "role": "admin"}}
+content_requests = {}
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
@@ -23,7 +35,6 @@ async def auth_middleware(request: Request, call_next):
             content={"detail": "Not authenticated"}
         )
     
-    # 3. Simple validation and attach user to request state
     token = auth_header.split(" ")[1]
     if "dummy_jwt" not in token:
         return JSONResponse(
@@ -31,44 +42,98 @@ async def auth_middleware(request: Request, call_next):
             content={"detail": "Invalid token"}
         )
     
-    # Attach the email (extracted from token) to the request context
     request.state.email = token.split("dummy_jwt")[1]
 
     return await call_next(request)
 
-tempdict = {}
-temp_admin_email = "fulfutureful@gmail.com"
-userdict = {temp_admin_email: (10, "admin")} # email: (credits, role)
-content_requests  = {} #requested_by , product_desc, tone, caption, request_status=pending/approved/rejected, request_reason_rejected, created_at)
-
 load_dotenv()
 
-yag = yagmail.SMTP(os.getenv('GMAIL_ID'), os.getenv('APP_PASSWORD'))
+yag = yagmail.SMTP(os.getenv("GMAIL_ID"), os.getenv("APP_PASSWORD"))
 
-# 15 minute valid otp
-def generate_otp(email):
-    otp = random.randint(100000, 999999)
-    tempdict[email] = (otp, time.time())
-    return otp
-
-def verify(email, otp):
-    if email in tempdict:
-        stored_otp, timestamp = tempdict[email]
-        if time.time() - timestamp < 900 and stored_otp == otp:
-            del tempdict[email]
-            return True
-    return False
 
 class EmailSchema(BaseModel):
     email: EmailStr
+
 
 class OTPSchema(BaseModel):
     email: EmailStr
     otp: int
 
+
 class CaptionSchema(BaseModel):
     description: str
     tone: str
+
+
+class CreateUserSchema(BaseModel):
+    email: EmailStr
+    credits: int
+    role: str = "user"
+
+
+class UpdateUserSchema(BaseModel):
+    email_to_update: EmailStr
+    new_email: Optional[EmailStr] = None
+    new_credits: Optional[int] = None
+    new_role: Optional[str] = None
+
+
+class ReviewRequestSchema(BaseModel):
+    email_to_review: EmailStr
+    approve: bool
+    reason: Optional[str] = None
+
+
+class ApprovalRequestSchema(BaseModel):
+    requested_by: EmailStr
+    product_desc: str
+    tone: str
+    generated_caption: str
+
+def generate_otp(email):
+    otp = random.randint(100000, 999999)
+    tempdict[email] = (otp, time.time())
+    return otp
+
+
+def verify(email, otp):
+    if email in tempdict:
+        stored_otp, timestamp = tempdict[email]
+        if time.time() - timestamp < OTP_VALID_SECONDS and stored_otp == otp:
+            del tempdict[email]
+            return True
+    return False
+
+
+def get_user(email):
+    return userdict.get(email)
+
+
+def require_user(email):
+    user = get_user(email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+def require_admin(email):
+    user = require_user(email)
+    if user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return user
+
+
+def set_user(email, credits, role):
+    userdict[email] = {"credits": credits, "role": role}
+
+
+def pop_user(email):
+    if email in userdict:
+        del userdict[email]
+
+
+def next_request_key(email):
+    return f"{email}:{int(time.time() * 1000)}"
 
 
 @app.post("/submit-email")
@@ -100,11 +165,11 @@ async def verify_otp(payload: OTPSchema):
 @app.post("/generate-caption")
 async def generate_caption(payload: CaptionSchema, request: Request):
     email = request.state.email
-    caption = f"Generated caption for {payload.description} with {payload.tone} tone"
     # subtract 1 credit from user
     credits, role = userdict[email]
     if credits <= 0:
         raise HTTPException(status_code=403, detail="Not enough credits")
+    caption = generate_caption_text(payload.description, payload.tone)
     userdict[email] = (credits - 1, role)
     return {"message": "Caption generated and waiting for approval", "caption": caption}
 
