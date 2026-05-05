@@ -2,8 +2,7 @@
 import os
 
 from dotenv import load_dotenv
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 
 load_dotenv()
@@ -18,10 +17,10 @@ llm = ChatOpenAI(
     openai_api_key=os.getenv("OPENAI_API_KEY"),
 )
 
-chain = LLMChain(llm=llm, prompt=prompt_template)
+chain = prompt_template | llm
 
 
 def generate_caption_text(description: str, tone: str) -> str:
     result = chain.invoke({"description": description, "tone": tone})
-    return result["text"]
+    return result.content
 
