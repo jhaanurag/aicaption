@@ -1,150 +1,65 @@
-"""
-Caption Router - handles caption generation and approval workflow
-"""
+from fastapi import APIRouter, HTTPException, Request, status
 
-from fastapi import APIRouter, HTTPException, status, Depends
-from backend.schemas.requests import CaptionSchema, ReviewRequestSchema, ApprovalRequestSchema
-from backend.services.caption_service import generate_caption
-from backend.services.user_service import deduct_credits, has_sufficient_credits
-from backend.dao.request_dao import (
-    create_request, get_all_requests, update_request_status, 
-    get_user_requests, next_request_key
-)
-from backend.middlewares.auth_middleware import verify_token, require_admin
+from backend.dao.request_dao import create_request, list_requests, update_request_status
+from backend.schemas.requests import ApprovalRequestSchema, CaptionSchema, ReviewRequestSchema
+from backend.middlewares.auth_middleware import admin, user
+from backend.services.ai_service import generate_caption_text
+from backend.dao.user_dao import deduct_user_credit
 
-router = APIRouter(prefix="/caption", tags=["caption"])
+router = APIRouter(prefix="/captions", tags=["captions"])
 
 
-@router.post("/generate-caption")
-async def generate_caption_endpoint(
-    request: CaptionSchema,
-    email: str = Depends(verify_token)
-):
-    """
-    Generate caption for image description (costs 1 credit)
-    
-    Args:
-        request: Image description and tone
-        email: Authenticated user email
-    
-    Returns:
-        Generated caption text
-    """
-    if not has_sufficient_credits(email, 1):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Insufficient credits"
-        )
-    
-    # Generate caption
-    caption = generate_caption(request.description, request.tone)
-    
-    # Deduct credit
-    deduct_credits(email, 1)
-    
-    return {"caption": caption}
+@router.post("/generate")
+async def generate_caption_endpoint(data: CaptionSchema, request: Request):
+    current_user = await user(request)
+    if current_user["max_ai_credits"] < 1:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient AI credits")
+
+    caption = generate_caption_text(data.product_description, data.campaign_tone)
+    if not await deduct_user_credit(current_user["email_id"]):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient AI credits")
+
+    return {"generated_caption": caption}
 
 
 @router.get("/credits")
-async def get_credits(email: str = Depends(verify_token)):
-    """
-    Get user's remaining credits
-    
-    Args:
-        email: Authenticated user email
-    
-    Returns:
-        Remaining credit count
-    """
-    from backend.dao.user_dao import get_user
-    
-    user = get_user(email)
-    return {"credits": user["credits"]}
+async def get_credits(request: Request):
+    current_user = await user(request)
+    return {"max_ai_credits": current_user["max_ai_credits"]}
 
 
-@router.post("/send-for-approval")
-async def send_for_approval(
-    request: ApprovalRequestSchema,
-    email: str = Depends(verify_token)
+@router.post("/approval-requests")
+async def submit_for_approval(data: ApprovalRequestSchema, request: Request):
+    current_user = await user(request)
+    data = data.model_dump()
+    data["requested_by"] = current_user["email_id"]
+    return await create_request(data)
+
+
+@router.get("/approval-requests")
+async def get_approval_requests(
+    request: Request,
+    requested_by: str | None = None,
+    request_status: str | None = "PENDING",
 ):
-    """
-    Send caption for admin approval
-    
-    Args:
-        request: Caption and description to approve
-        email: Authenticated user email
-    
-    Returns:
-        Request ID for tracking
-    """
-    request_id = next_request_key()
-    
-    create_request(
-        request_id,
-        {
-            "requested_by": email,
-            "description": request.description,
-            "caption": request.caption,
-            "request_status": "pending"
-        }
-    )
-    
-    return {"request_id": request_id, "status": "pending"}
-
-
-@router.get("/all-requests")
-async def get_all_requests_endpoint(
-    admin_email: str = Depends(require_admin)
-):
-    """
-    Get all approval requests (admin only)
-    
-    Args:
-        admin_email: Admin email (verified by middleware)
-    
-    Returns:
-        All pending/approved/rejected requests
-    """
-    from backend.state import content_requests
-    return {"requests": content_requests}
+    await admin(request)
+    return {"requests": await list_requests(requested_by, request_status)}
 
 
 @router.get("/my-requests")
-async def get_my_requests(
-    email: str = Depends(verify_token)
-):
-    """
-    Get user's own approval requests
-    
-    Args:
-        email: Authenticated user email
-    
-    Returns:
-        User's requests with statuses
-    """
-    requests = get_user_requests(email)
-    return {"requests": requests}
+async def get_my_requests(request: Request):
+    current_user = await user(request)
+    return {"requests": await list_requests(requested_by=current_user["email_id"])}
 
 
-@router.post("/review-request")
-async def review_request(
-    request: ReviewRequestSchema,
-    admin_email: str = Depends(require_admin)
-):
-    """
-    Review and approve/reject caption request (admin only)
-    
-    Args:
-        request: Request ID, approval status, and reason
-        admin_email: Admin email (verified by middleware)
-    
-    Returns:
-        Updated request status
-    """
-    update_request_status(
-        request_id=request.request_id,
-        status=request.status,
-        reason=request.reason
-    )
-    
-    return {"request_id": request.request_id, "status": request.status}
+@router.post("/approval-requests/review")
+async def review_request(data: ReviewRequestSchema, request: Request):
+    await admin(request)
+    if data.status == "REJECTED" and not data.reason:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reject reason is required")
+
+    reason = data.reason.strip() if data.reason else ""
+    updated = await update_request_status(data.request_id, data.status, reason)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+    return updated

@@ -1,13 +1,8 @@
-"""
-Email Service - sends OTP emails using GMAIL_USER and GMAIL_PASSWORD
-"""
-
 import os
 import yagmail
 
 
 def send_otp_email(email: str, otp: str):
-    """Send OTP to email"""
     gmail_user = os.getenv("GMAIL_USER")
     gmail_password = os.getenv("GMAIL_PASSWORD")
     

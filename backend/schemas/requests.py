@@ -1,52 +1,48 @@
-"""
-Pydantic request and response models for validation
-"""
 from typing import Optional
-from pydantic import BaseModel, EmailStr
+
+from pydantic import BaseModel, EmailStr, Field
 
 
 class EmailSchema(BaseModel):
-    """Email submission for OTP request"""
-    email: EmailStr
+    email_id: EmailStr
 
 
 class OTPSchema(BaseModel):
-    """OTP verification request"""
-    email: EmailStr
-    otp: int
+    email_id: EmailStr
+    otp: str = Field(min_length=6, max_length=6)
 
 
 class CaptionSchema(BaseModel):
-    """Caption generation request"""
-    description: str
-    tone: str
+    product_description: str = Field(min_length=3)
+    campaign_tone: str = Field(min_length=2)
 
 
 class CreateUserSchema(BaseModel):
-    """Create new user (admin only)"""
-    email: EmailStr
-    credits: int
-    role: str = "user"
+    email_id: EmailStr
+    first_name: str = Field(min_length=1)
+    last_name: str = Field(min_length=1)
+    role: str = "USER"
+    max_ai_credits: int = Field(ge=0)
+    is_active: bool = True
 
 
 class UpdateUserSchema(BaseModel):
-    """Update user details (admin only)"""
-    email_to_update: EmailStr
-    new_email: Optional[EmailStr] = None
-    new_credits: Optional[int] = None
-    new_role: Optional[str] = None
+    email_id: EmailStr
+    new_email_id: Optional[EmailStr] = None
+    first_name: Optional[str] = Field(default=None, min_length=1)
+    last_name: Optional[str] = Field(default=None, min_length=1)
+    role: Optional[str] = None
+    max_ai_credits: Optional[int] = Field(default=None, ge=0)
+    is_active: Optional[bool] = None
 
 
 class ReviewRequestSchema(BaseModel):
-    """Approve or reject approval request (admin only)"""
-    email_to_review: EmailStr
-    approve: bool
+    request_id: str
+    status: str
     reason: Optional[str] = None
 
 
 class ApprovalRequestSchema(BaseModel):
-    """Submit content for approval"""
-    requested_by: EmailStr
-    product_desc: str
-    tone: str
-    generated_caption: str
+    product_description: str = Field(min_length=3)
+    campaign_tone: str = Field(min_length=2)
+    generated_caption: str = Field(min_length=1)

@@ -1,48 +1,46 @@
-"""
-Authentication Service - handles JWT token generation and OTP validation
-"""
+from datetime import datetime, timedelta, timezone
 
-import time
-from backend.dao.user_dao import get_user
-from backend.state import tempdict
-from backend.constants import OTP_VALID_SECONDS
+import jwt
 
+from backend.constants import JWT_ALGORITHM, JWT_EXPIRE_SECONDS, JWT_SECRET_KEY, OTP_VALID_SECONDS
 
-def generate_token(email: str) -> str:
-    """Generate dummy JWT token"""
-    return f"dummy_jwt{email}"
+otp_store = {}
 
 
-def validate_otp(email: str, otp: str) -> bool:
-    """Validate OTP against stored value"""
-    if email not in tempdict:
+def generate_token(email_id: str, role: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": email_id.lower(),
+        "role": role,
+        "iat": now,
+        "exp": now + timedelta(seconds=JWT_EXPIRE_SECONDS),
+    }
+    return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+
+
+def validate_otp(email_id: str, otp: str) -> bool:
+    email_id = email_id.lower()
+    if email_id not in otp_store:
         return False
-    
-    stored_otp, timestamp = tempdict[email]
+
+    stored_otp, timestamp = otp_store[email_id]
     if stored_otp != otp:
         return False
-    
-    # Check if OTP expired
-    if time.time() - timestamp > OTP_VALID_SECONDS:
-        del tempdict[email]
+
+    if datetime.now(timezone.utc).timestamp() - timestamp > OTP_VALID_SECONDS:
+        del otp_store[email_id]
         return False
-    
-    del tempdict[email]
+
+    del otp_store[email_id]
     return True
 
 
-def store_otp(email: str, otp: str):
-    """Store OTP with timestamp"""
-    tempdict[email] = (otp, time.time())
+def store_otp(email_id: str, otp: str) -> None:
+    otp_store[email_id.lower()] = (otp, datetime.now(timezone.utc).timestamp())
 
 
-def validate_token(token: str) -> str | None:
-    """Extract email from token, None if invalid"""
-    if not token.startswith("dummy_jwt"):
+def decode_token(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
         return None
-    return token.replace("dummy_jwt", "")
-
-
-def check_user_exists(email: str) -> bool:
-    """Check if user exists"""
-    return get_user(email) is not None

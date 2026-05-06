@@ -1,46 +1,53 @@
-"""
-Request Data Access Object - handles approval request CRUD operations
-"""
+from datetime import datetime, timezone
 
-import time
-from backend.state import content_requests
+from bson import ObjectId
 
-
-def next_request_key(email: str) -> str:
-    """Generate unique request key"""
-    return f"{email}:{int(time.time() * 1000)}"
+from backend.dao.database import database
+from backend.models.content_request import ContentRequestModel
 
 
-def create_request(request_key: str, request_data: dict):
-    """Store approval request"""
-    content_requests[request_key] = request_data
+def clean_id(doc):
+    if doc:
+        doc["id"] = str(doc.pop("_id"))
+    return doc
 
 
-def get_request(request_key: str):
-    """Get request by key"""
-    return content_requests.get(request_key)
+async def create_request(data: dict):
+    data["requested_by"] = data["requested_by"].lower()
+    data["request_status"] = "PENDING"
+    data["request_reject_reason"] = ""
+    data["created_at"] = datetime.now(timezone.utc)
+    data = ContentRequestModel(**data).model_dump(mode="json")
+
+    result = await database.content_requests.insert_one(data)
+    data["_id"] = result.inserted_id
+    return clean_id(data)
 
 
-def get_all_requests():
-    """Get all requests"""
-    return content_requests
+async def list_requests(requested_by=None, request_status=None):
+    query = {}
+    if requested_by:
+        query["requested_by"] = requested_by.lower()
+    if request_status:
+        query["request_status"] = request_status
+
+    cursor = database.content_requests.find(query).sort("created_at", -1)
+    requests = []
+    async for request in cursor:
+        requests.append(clean_id(request))
+    return requests
 
 
-def get_user_requests(email: str):
-    """Get all requests by user"""  
-    return [req for req in content_requests.values() if req["requested_by"] == email]
+async def update_request_status(request_id: str, status: str, reason: str = ""):
+    if not ObjectId.is_valid(request_id):
+        return None
 
+    result = await database.content_requests.update_one(
+        {"_id": ObjectId(request_id)},
+        {"$set": {"request_status": status, "request_reject_reason": reason}},
+    )
+    if result.matched_count == 0:
+        return None
 
-def find_request_by_email(email: str):
-    """Find first request key for user"""
-    for key, request_item in content_requests.items():
-        if request_item["requested_by"] == email:
-            return key
-    return None
-
-
-def update_request_status(request_key: str, status: str, reason: str = None):
-    """Update request status (approved/rejected) and optional reason"""
-    if request_key in content_requests:
-        content_requests[request_key]["request_status"] = status
-        content_requests[request_key]["request_reason_rejected"] = reason
+    request = await database.content_requests.find_one({"_id": ObjectId(request_id)})
+    return clean_id(request)

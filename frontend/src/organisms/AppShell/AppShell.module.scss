@@ -1,0 +1,52 @@
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  background: #f7f6f1;
+
+  aside {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 28px;
+    border-right: 1px solid #ded8cb;
+    background: #ede7da;
+  }
+
+  h1 {
+    margin: 0;
+    color: #1f2933;
+    font-size: 24px;
+  }
+
+  p {
+    color: #6b6256;
+    word-break: break-word;
+  }
+
+  button {
+    margin-top: auto;
+    border: 0;
+    background: transparent;
+    color: #8a3f20;
+    cursor: pointer;
+    font-weight: 700;
+    text-align: left;
+  }
+
+  section {
+    min-width: 0;
+    padding: 32px;
+  }
+}
+
+@media (max-width: 780px) {
+  .shell {
+    grid-template-columns: 1fr;
+
+    aside {
+      border-right: 0;
+      border-bottom: 1px solid #ded8cb;
+    }
+  }
+}

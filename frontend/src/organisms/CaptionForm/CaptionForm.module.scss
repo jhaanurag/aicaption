@@ -1,0 +1,39 @@
+.layout {
+  display: grid;
+  gap: 22px;
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: center;
+  }
+
+  h2,
+  h3 {
+    margin: 0;
+  }
+
+  strong {
+    padding: 8px 12px;
+    background: #e7dcc6;
+    color: #493a24;
+  }
+}
+
+.panel,
+.caption {
+  max-width: 820px;
+  background: #fffefa;
+}
+
+.panel {
+  display: grid;
+  gap: 18px;
+}
+
+.caption p {
+  color: #29333d;
+  font-size: 18px;
+  line-height: 1.55;
+}

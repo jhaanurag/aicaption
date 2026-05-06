@@ -1,111 +1,54 @@
-"""
-User Router - handles user management (admin only)
-"""
+from fastapi import APIRouter, HTTPException, Request, status
+from pymongo.errors import DuplicateKeyError
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from backend.dao.user_dao import create_user, list_users, update_user
+from backend.middlewares.auth_middleware import admin, get_current_user
 from backend.schemas.requests import CreateUserSchema, UpdateUserSchema
-from backend.services.user_service import register_user
-from backend.dao.user_dao import (
-    get_user, set_user, pop_user, update_user_role
-)
-from backend.state import userdict
-from backend.middlewares.auth_middleware import require_admin
 
-router = APIRouter(prefix="/user", tags=["user"])
+router = APIRouter(prefix="/users", tags=["users"])
 
 
-@router.post("/create-user")
-async def create_user(
-    request: CreateUserSchema,
-    admin_email: str = Depends(require_admin)
-):
-    """
-    Create new user (admin only)
-    
-    Args:
-        request: User email and initial credits
-        admin_email: Admin email (verified by middleware)
-    
-    Returns:
-        New user details
-    """
-    if get_user(request.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User already exists"
-        )
-    
-    set_user(request.email, request.credits, "user")
-    
-    return {"email": request.email, "credits": request.credits, "role": "user"}
+@router.get("/me")
+async def get_me(request: Request):
+    return await get_current_user(request)
 
 
-@router.post("/delete-user")
-async def delete_user(
-    request: CreateUserSchema,
-    admin_email: str = Depends(require_admin)
-):
-    """
-    Delete user (admin only)
-    
-    Args:
-        request: User email to delete
-        admin_email: Admin email (verified by middleware)
-    
-    Returns:
-        Deletion confirmation
-    """
-    if not pop_user(request.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User not found"
-        )
-    
-    return {"message": f"User {request.email} deleted"}
+@router.post("")
+async def add_user(data: CreateUserSchema, request: Request):
+    await admin(request)
+    try:
+        return await create_user(data.model_dump(mode="json"))
+    except DuplicateKeyError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User already exists")
 
 
-@router.post("/update-user")
-async def update_user(
-    request: UpdateUserSchema,
-    admin_email: str = Depends(require_admin)
-):
-    """
-    Update user credits or role (admin only)
-    
-    Args:
-        request: User email and new credits/role
-        admin_email: Admin email (verified by middleware)
-    
-    Returns:
-        Updated user details
-    """
-    user = get_user(request.email)
+@router.patch("/{email_id}")
+async def edit_user(email_id: str, data: UpdateUserSchema, request: Request):
+    await admin(request)
+    updates = data.model_dump(exclude_none=True, mode="json")
+    updates.pop("email_id", None)
+    if "new_email_id" in updates:
+        updates["email_id"] = updates.pop("new_email_id")
+
+    user = await update_user(email_id, updates)
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User not found"
-        )
-    
-    if request.credits is not None:
-        user["credits"] = request.credits
-    
-    if request.role is not None:
-        update_user_role(request.email, request.role)
-    
-    return {"email": request.email, "credits": user["credits"], "role": user["role"]}
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
 
 
-@router.get("/all-users")
+@router.patch("/{email_id}/deactivate")
+async def deactivate_user(email_id: str, request: Request):
+    await admin(request)
+    user = await update_user(email_id, {"is_active": False})
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return user
+
+
+@router.get("")
 async def get_all_users(
-    admin_email: str = Depends(require_admin)
+    request: Request,
+    is_active: bool | None = None,
 ):
-    """
-    Get all users (admin only)
-    
-    Args:
-        admin_email: Admin email (verified by middleware)
-    
-    Returns:
-        All users with their credits and roles
-    """
-    return {"users": userdict}
+    await admin(request)
+    return {"users": await list_users(is_active=is_active)}
